@@ -1,12 +1,14 @@
 {
-  "name": "roblox-donation-proxy",
+  "name": "roblox-donation-system",
   "version": "1.0.0",
-  "description": "Proxy server for BagiBagi donation webhook to Roblox",
-  "main": "index.js",
+  "description": "Saweria webhook for Roblox",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "dotenv": "^16.0.3",
+    "cors": "^2.8.5"
   }
 }
