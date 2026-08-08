@@ -12,15 +12,17 @@ let lastDonation = null;
 // Saweria webhook endpoint
 app.post('/webhook/saweria', (req, res) => {
   try {
+    console.log('📩 RAW BODY DARI SAWERIA:', JSON.stringify(req.body, null, 2));
+
     const donation = {
-      name: req.body.supporter_name || 'Anonymous',
-      amount: req.body.amount || 0,
+      name: req.body.supporter_name || req.body.donator_name || req.body.donatur || 'Anonymous',
+      amount: req.body.amount || req.body.amount_raw || 0,
       message: req.body.message || '',
       timestamp: new Date().toISOString()
     };
     
     lastDonation = donation;
-    console.log('✅ Donation received:', donation);
+    console.log('✅ Donation diproses:', donation);
     
     res.json({ success: true, message: 'Donation logged' });
   } catch (error) {
