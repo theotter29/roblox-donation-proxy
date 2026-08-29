@@ -196,6 +196,11 @@ function connectToSaweria(streamKey) {
   saweriaClient = new SaweriaClient();
   saweriaClient.setStreamKey(key);
 
+  saweriaClient.on('error', (err) => {
+    log('Saweria connection error (non-fatal, server tetap jalan):', err?.message || err);
+    broadcastSourceStatus('saweria', false);
+  });
+
   saweriaClient.on('donations', (donations) => {
     (donations || []).forEach((d) => {
       broadcastDonation({
