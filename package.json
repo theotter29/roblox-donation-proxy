@@ -1,0 +1,14 @@
+{
+  "name": "tiktok-overlay-server",
+  "version": "1.0.0",
+  "main": "websocketServer.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node websocketServer.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.2",
+    "tiktok-live-connector": "^1.1.10",
+    "saweria": "^1.0.5"
+  }
+}
