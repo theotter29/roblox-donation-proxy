@@ -20,13 +20,25 @@
  * App -> server events:
  *   setSaweriaKey          { streamKey }    Sets the key used to verify Saweria webhooks
  *   setTiktokUsername       { username }    Connects/reconnects to a TikTok LIVE room at runtime
+ *
+ * NOTE (tiktok-live-connector v2.x):
+ *   - The class was renamed from `WebcastPushConnection` to `TikTokLiveConnection`.
+ *     We import both names defensively below so this file keeps working whether the
+ *     installed version still exposes the old alias or only the new name.
+ *   - `sendMessage()` was removed in v2 (not used in this file, so no impact).
+ *   - Event names ('chat', 'gift', 'roomUser', 'streamEnd', 'disconnected') and their
+ *     payload shapes (data.uniqueId, data.nickname, data.comment, data.giftType, etc.)
+ *     are unchanged, so the handlers below did not need to change.
  */
 
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
-const { WebcastPushConnection } = require('tiktok-live-connector');
+const tiktokLib = require('tiktok-live-connector');
 const { createMiddleware } = require('saweria-webhook-express');
+
+// v2.x renamed WebcastPushConnection -> TikTokLiveConnection. Support either.
+const TikTokConnection = tiktokLib.TikTokLiveConnection || tiktokLib.WebcastPushConnection;
 
 const PORT = process.env.PORT || 3000;
 const TIKTOK_USERNAME = (process.env.TIKTOK_USERNAME || '').replace(/^@/, '');
@@ -99,7 +111,7 @@ function connectToTikTok(username) {
   }
 
   log(`Connecting to TikTok LIVE for @${username}...`);
-  tiktokConnection = new WebcastPushConnection(username);
+  tiktokConnection = new TikTokConnection(username);
 
   tiktokConnection
     .connect()
@@ -154,6 +166,10 @@ function connectToTikTok(username) {
     log('Disconnected from TikTok LIVE');
     broadcastSourceStatus('tiktok', false);
     scheduleReconnect(username);
+  });
+
+  tiktokConnection.on('error', (err) => {
+    log('TikTok LIVE connection error:', err?.message || err);
   });
 }
 
