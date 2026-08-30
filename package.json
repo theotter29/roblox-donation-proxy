@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "socket.io": "^4.7.2",
-    "tiktok-live-connector": "^2.0.0"
+    "tiktok-live-connector": "^2.0.0",
     "saweria": "^2.0.1",
     "express": "^4.18.2",
     "saweria-webhook-express": "^1.0.0"
