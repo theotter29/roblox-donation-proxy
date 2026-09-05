@@ -15,6 +15,9 @@
  *   chat / chat_message   { id, username, message, timestamp, avatar? }
  *   donation               { id, username, amount, message, timestamp, source: 'tiktok'|'saweria' }
  *   viewerCount / viewer_count   { count }
+ *   likeCount / like_count       { count }   -- FIX: total like di sesi LIVE saat ini
+ *   followCount / follow_count   { count }   -- FIX: total follower baru di sesi LIVE saat ini
+ *   follow                        { username } -- FIX: event per orang yang baru follow
  *   update / live_status  { isLive, title }
  *   sourceStatus           { source: 'tiktok'|'saweria', connected }
  * App -> server events:
@@ -29,6 +32,9 @@
  *   - Event names ('chat', 'gift', 'roomUser', 'streamEnd', 'disconnected') and their
  *     payload shapes (data.uniqueId, data.nickname, data.comment, data.giftType, etc.)
  *     are unchanged, so the handlers below did not need to change.
+ *   - FIX: added 'like' (WebcastLikeMessage: totalLikeCount, likeCount) and 'social'
+ *     (WebcastSocialMessage: displayType containing "follow" for new followers, "share"
+ *     for shares -- we only care about follow here) listeners, both new in this file.
  */
 
 const http = require('http');
@@ -60,6 +66,11 @@ let currentTiktokUsername = TIKTOK_USERNAME;
 let saweriaWebhookMiddleware = null;
 let saweriaKeySet = false;
 
+// FIX: total like & follower baru di sesi LIVE yang lagi jalan sekarang.
+// Di-reset ke 0 tiap kali connectToTikTok() dipanggil (artinya sesi LIVE baru).
+let likeCountTotal = 0;
+let followCountTotal = 0;
+
 function log(...args) {
   console.log(`[${new Date().toISOString()}]`, ...args);
 }
@@ -78,6 +89,24 @@ function broadcastViewerCount(count) {
   io.emit('viewer_count', { count });
 }
 
+// FIX: broadcast total like sesi ini (bukan like per klik -- itu terlalu
+// ramai buat di-emit satu-satu, jadi kita jumlahkan dan kirim totalnya).
+function broadcastLikeCount(count) {
+  io.emit('likeCount', { count });
+  io.emit('like_count', { count });
+}
+
+// FIX: broadcast total follower baru sesi ini, plus event per-orang buat
+// yang mau nampilin nama follower terbaru (mis. alert).
+function broadcastFollowCount(count) {
+  io.emit('followCount', { count });
+  io.emit('follow_count', { count });
+}
+
+function broadcastNewFollower(username) {
+  io.emit('follow', { username });
+}
+
 function broadcastLiveStatus(isLive, title) {
   io.emit('live_status', { isLive, title: title || '' });
   io.emit('update', { isLive, title });
@@ -94,6 +123,12 @@ function connectToTikTok(username) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+
+  // FIX: sesi LIVE baru -> mulai lagi dari 0 buat goal like/follow.
+  likeCountTotal = 0;
+  followCountTotal = 0;
+  broadcastLikeCount(likeCountTotal);
+  broadcastFollowCount(followCountTotal);
 
   if (!username) {
     log(
@@ -157,6 +192,31 @@ function connectToTikTok(username) {
     }
   });
 
+  // FIX: WebcastLikeMessage. `totalLikeCount` dari library ini biasanya
+  // sudah total sejak sesi konek (bukan cuma batch ini), jadi dipakai
+  // langsung kalau ada; kalau versi library gak nyediain itu, fallback
+  // ke akumulasi manual pakai `likeCount` (like per tap di batch ini).
+  tiktokConnection.on('like', (data) => {
+    if (typeof data.totalLikeCount === 'number') {
+      likeCountTotal = data.totalLikeCount;
+    } else {
+      likeCountTotal += data.likeCount || 0;
+    }
+    broadcastLikeCount(likeCountTotal);
+  });
+
+  // FIX: WebcastSocialMessage dipakai buat follow DAN share -- kita cuma
+  // hitung yang follow. `displayType` isinya string kayak
+  // "pm_main_follow_message_viewer_2", makanya dicek pakai .includes().
+  tiktokConnection.on('social', (data) => {
+    const displayType = String(data?.displayType || '').toLowerCase();
+    if (displayType.includes('follow')) {
+      followCountTotal += 1;
+      broadcastFollowCount(followCountTotal);
+      broadcastNewFollower(data.nickname || data.uniqueId || 'someone');
+    }
+  });
+
   tiktokConnection.on('streamEnd', () => {
     log('TikTok LIVE stream ended');
     broadcastLiveStatus(false, '');
@@ -201,8 +261,23 @@ function setupSaweriaWebhook(streamKey) {
   broadcastSourceStatus('saweria', true);
 }
 
+// FIX (debug): saweria-webhook-express membalas 403/401 SENDIRI kalau
+// header 'Saweria-Callback-Signature' hilang/salah -- itu terjadi SEBELUM
+// kode kita sempat log apa pun, jadi selama ini kita buta total soal apakah
+// Saweria beneran ngirim request atau enggak. Middleware log kecil ini
+// dipasang PALING DEPAN (sebelum verifikasi signature) supaya SETIAP
+// request yang masuk ke /webhook selalu kelihatan di log, apa pun hasilnya.
 app.post('/webhook', (req, res, next) => {
+  log(
+    'Webhook request masuk. Header signature:',
+    req.headers['saweria-callback-signature'] || '(TIDAK ADA)',
+    '| Content-Type:', req.headers['content-type'],
+    '| IP:', req.ip
+  );
+  next();
+}, (req, res, next) => {
   if (!saweriaWebhookMiddleware) {
+    log('Webhook ditolak: stream key belum di-set di server ini.');
     return res.status(503).json({ error: 'Saweria stream key not configured on this server' });
   }
   saweriaWebhookMiddleware(req, res, next);
@@ -227,6 +302,12 @@ io.on('connection', (socket) => {
   socket.emit('connected', { message: 'Connected to server' });
   socket.emit('sourceStatus', { source: 'tiktok', connected: !!tiktokConnection });
   socket.emit('sourceStatus', { source: 'saweria', connected: saweriaKeySet });
+  // FIX: klien yang baru connect (mis. buka app pas LIVE udah jalan) perlu
+  // tau angka like/follow yang sudah terkumpul, bukan mulai dari 0 di layar.
+  socket.emit('likeCount', { count: likeCountTotal });
+  socket.emit('like_count', { count: likeCountTotal });
+  socket.emit('followCount', { count: followCountTotal });
+  socket.emit('follow_count', { count: followCountTotal });
 
   socket.on('setTiktokUsername', (data, ack) => {
     const username = (typeof data === 'string' ? data : data?.username || '').replace(/^@/, '').trim();
