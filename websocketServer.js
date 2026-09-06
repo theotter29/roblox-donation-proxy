@@ -1,33 +1,28 @@
 /**
- * TikTok LIVE + Saweria + IndoFinity -> Socket.IO bridge for the floating overlay app.
+ * TikTok LIVE + Saweria -> Socket.IO bridge for the floating overlay app.
  *
  * Run:
- *   TIKTOK_USERNAME=youraccount SAWERIA_STREAM_KEY=yourkey INDOFINITY_URL=http://localhost:62825 node websocketServer.js
+ *   TIKTOK_USERNAME=youraccount SAWERIA_STREAM_KEY=yourkey node server/websocketServer.js
  *
  * Env vars:
  *   TIKTOK_USERNAME       TikTok username to watch, without the "@"
  *   SAWERIA_STREAM_KEY    Saweria stream key -- also used to verify webhook signatures.
  *                         Set your Saweria Webhook Integration URL to:
  *                         https://<your-railway-domain>/webhook
- *   INDOFINITY_URL        IndoFinity server URL (default: http://localhost:62825)
  *   PORT                  Port to listen on (default 3000)
  *
  * Events emitted:
  *   chat / chat_message   { id, username, message, timestamp, avatar? }
- *   indofinity_chat        { id, username, message, timestamp, avatar? }  [NEW]
  *   donation               { id, username, amount, message, timestamp, source: 'tiktok'|'saweria' }
- *   indofinity_donation    { id, username, amount, message, timestamp }   [NEW]
  *   viewerCount / viewer_count   { count }
  *   likeCount / like_count       { count }   -- FIX: total like di sesi LIVE saat ini
  *   followCount / follow_count   { count }   -- FIX: total follower baru di sesi LIVE saat ini
  *   follow                        { username } -- FIX: event per orang yang baru follow
  *   update / live_status  { isLive, title }
- *   sourceStatus           { source: 'tiktok'|'saweria'|'indofinity', connected }
- *   indofinity_status      { connected }                                  [NEW]
+ *   sourceStatus           { source: 'tiktok'|'saweria', connected }
  * App -> server events:
  *   setSaweriaKey          { streamKey }    Sets the key used to verify Saweria webhooks
  *   setTiktokUsername       { username }    Connects/reconnects to a TikTok LIVE room at runtime
- *   setIndofinityUrl        { url }         Connects to an IndoFinity server at runtime [NEW]
  *
  * NOTE (tiktok-live-connector v2.x):
  *   - The class was renamed from `WebcastPushConnection` to `TikTokLiveConnection`.
@@ -47,7 +42,6 @@ const express = require('express');
 const { Server } = require('socket.io');
 const tiktokLib = require('tiktok-live-connector');
 const { createMiddleware } = require('saweria-webhook-express');
-const { io: ioClient } = require('socket.io-client');
 
 // v2.x renamed WebcastPushConnection -> TikTokLiveConnection. Support either.
 const TikTokConnection = tiktokLib.TikTokLiveConnection || tiktokLib.WebcastPushConnection;
@@ -55,7 +49,6 @@ const TikTokConnection = tiktokLib.TikTokLiveConnection || tiktokLib.WebcastPush
 const PORT = process.env.PORT || 3000;
 const TIKTOK_USERNAME = (process.env.TIKTOK_USERNAME || '').replace(/^@/, '');
 const SAWERIA_STREAM_KEY = process.env.SAWERIA_STREAM_KEY || '';
-const INDOFINITY_URL = process.env.INDOFINITY_URL || 'http://localhost:62825';
 const RECONNECT_DELAY_MS = 10000;
 
 const app = express();
@@ -77,11 +70,6 @@ let saweriaKeySet = false;
 // Di-reset ke 0 tiap kali connectToTikTok() dipanggil (artinya sesi LIVE baru).
 let likeCountTotal = 0;
 let followCountTotal = 0;
-
-// ====== IndoFinity Connection State (NEW) ======
-let indofinitySocket = null;
-let indofinityConnected = false;
-let currentIndofinityUrl = INDOFINITY_URL;
 
 function log(...args) {
   console.log(`[${new Date().toISOString()}]`, ...args);
@@ -126,115 +114,6 @@ function broadcastLiveStatus(isLive, title) {
 
 function broadcastSourceStatus(source, connected) {
   io.emit('sourceStatus', { source, connected });
-}
-
-// ====== IndoFinity BROADCAST FUNCTIONS (NEW) ======
-
-function broadcastIndofinityChat(payload) {
-  log('[IndoFinity] Broadcasting chat:', payload.username);
-  io.emit('indofinity_chat', payload);
-  // Ikut disiarkan ke channel chat umum (yang dibaca widget Chat/Donasi di layar).
-  io.emit('chat', { ...payload, source: 'indofinity' });
-  io.emit('chat_message', { ...payload, source: 'indofinity' });
-}
-
-function broadcastIndofinityDonation(payload) {
-  log('[IndoFinity] Broadcasting donation:', payload.username, '-', payload.amount);
-  io.emit('indofinity_donation', payload);
-  // Ikut disiarkan ke channel donation umum (yang dibaca widget Donasi di layar).
-  io.emit('donation', payload);
-}
-
-function broadcastIndofinityStatus(connected) {
-  log('[IndoFinity] Status:', connected ? 'connected' : 'disconnected');
-  io.emit('sourceStatus', { source: 'indofinity', connected });
-  io.emit('indofinity_status', { connected });
-}
-
-// ====== IndoFinity CONNECTION (NEW) ======
-
-function connectToIndoFinity(url) {
-  const indoUrl = (url || '').trim();
-
-  if (!indoUrl) {
-    log('[IndoFinity] No URL provided, skipping...');
-    if (indofinitySocket) {
-      indofinitySocket.disconnect();
-      indofinitySocket = null;
-    }
-    indofinityConnected = false;
-    broadcastIndofinityStatus(false);
-    return;
-  }
-
-  currentIndofinityUrl = indoUrl;
-
-  if (indofinitySocket) {
-    indofinitySocket.disconnect();
-    indofinitySocket = null;
-  }
-
-  log(`[IndoFinity] Connecting to ${indoUrl}...`);
-
-  indofinitySocket = ioClient(indoUrl, {
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    reconnectionAttempts: 5,
-    transports: ['websocket', 'polling'],
-  });
-
-  indofinitySocket.on('connect', () => {
-    log('[IndoFinity] Connected!');
-    indofinityConnected = true;
-    broadcastIndofinityStatus(true);
-  });
-
-  indofinitySocket.on('connect_error', (err) => {
-    log('[IndoFinity] Connection error:', err?.message || err);
-    indofinityConnected = false;
-    broadcastIndofinityStatus(false);
-  });
-
-  indofinitySocket.on('disconnect', () => {
-    log('[IndoFinity] Disconnected');
-    indofinityConnected = false;
-    broadcastIndofinityStatus(false);
-  });
-
-  // Format pesan dari IndoFinity: { event: "chat" | "donation", data: {...} }
-  indofinitySocket.on('message', (data) => {
-    try {
-      const { event, data: eventData } = data || {};
-
-      if (event === 'chat') {
-        broadcastIndofinityChat({
-          id: `indofinity-chat-${eventData.uniqueId || Date.now()}`,
-          username: eventData.uniqueId || eventData.userName || 'Unknown',
-          message: eventData.comment || '',
-          timestamp: Date.now(),
-          avatar: eventData.avatar,
-        });
-      }
-
-      if (event === 'donation' || event === 'gift') {
-        broadcastIndofinityDonation({
-          id: `indofinity-donation-${eventData.uniqueId || Date.now()}`,
-          username: eventData.uniqueId || eventData.userName || 'Unknown',
-          amount: eventData.amount || 0,
-          message: eventData.message || 'Donation',
-          timestamp: Date.now(),
-          source: 'indofinity',
-        });
-      }
-    } catch (err) {
-      log('[IndoFinity] Error parsing message:', err?.message);
-    }
-  });
-
-  indofinitySocket.on('error', (err) => {
-    log('[IndoFinity] Socket error:', err?.message || err);
-  });
 }
 
 function connectToTikTok(username) {
@@ -429,8 +308,6 @@ io.on('connection', (socket) => {
   socket.emit('like_count', { count: likeCountTotal });
   socket.emit('followCount', { count: followCountTotal });
   socket.emit('follow_count', { count: followCountTotal });
-  socket.emit('sourceStatus', { source: 'indofinity', connected: indofinityConnected });
-  socket.emit('indofinity_status', { connected: indofinityConnected });
 
   socket.on('setTiktokUsername', (data, ack) => {
     const username = (typeof data === 'string' ? data : data?.username || '').replace(/^@/, '').trim();
@@ -454,17 +331,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('setIndofinityUrl', (data, ack) => {
-    const url = typeof data === 'string' ? data : data?.url || '';
-    try {
-      connectToIndoFinity(url);
-      if (typeof ack === 'function') ack({ success: true });
-    } catch (err) {
-      log('Failed to connect to IndoFinity:', err?.message || err);
-      if (typeof ack === 'function') ack({ success: false, error: err?.message });
-    }
-  });
-
   socket.on('disconnect', () => {
     connectedClients = Math.max(0, connectedClients - 1);
     log(`App disconnected (${connectedClients} client(s) left)`);
@@ -474,13 +340,10 @@ io.on('connection', (socket) => {
 httpServer.listen(PORT, () => {
   connectToTikTok(TIKTOK_USERNAME);
   if (SAWERIA_STREAM_KEY) setupSaweriaWebhook(SAWERIA_STREAM_KEY);
-  if (INDOFINITY_URL) connectToIndoFinity(INDOFINITY_URL);
   log(`WebSocket bridge listening on port ${PORT}`);
 });
 
 process.on('SIGINT', () => {
   if (tiktokConnection) tiktokConnection.disconnect();
-  if (indofinitySocket) indofinitySocket.disconnect();
   log('Shutting down...');
-  process.exit(0);
 });
