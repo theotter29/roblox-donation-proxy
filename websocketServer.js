@@ -174,6 +174,21 @@ function connectToTikTok(username) {
     });
 
   tiktokConnection.on('chat', (data) => {
+    // === DEBUG: Log SEMUA field dari data object ===
+    console.log('[CHAT DEBUG - Full Data]', JSON.stringify(data, null, 2));
+    console.log('[CHAT DEBUG - Field Check]', {
+      nickname: data.nickname,
+      uniqueId: data.uniqueId,
+      userName: data.userName,
+      user_name: data.user_name,
+      sender: data.sender,
+      author: data.author,
+      comment: data.comment?.substring(0, 50),
+      userId: data.userId,
+      msgId: data.msgId,
+    });
+    // ============================================
+
     broadcastChat({
       id: `${data.userId || 'u'}-${data.msgId || Date.now()}`,
       username: data.nickname || data.uniqueId || 'unknown',
@@ -184,6 +199,17 @@ function connectToTikTok(username) {
   });
 
   tiktokConnection.on('gift', (data) => {
+    // === DEBUG: Log gift/donation data ===
+    console.log('[GIFT DEBUG]', {
+      nickname: data.nickname,
+      uniqueId: data.uniqueId,
+      userName: data.userName,
+      giftName: data.giftName,
+      diamondCount: data.diamondCount,
+      userId: data.userId,
+    });
+    // ====================================
+
     const isStreakable = data.giftType === 1;
     if (!isStreakable || data.repeatEnd) {
       broadcastDonation({
