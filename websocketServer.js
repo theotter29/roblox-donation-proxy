@@ -174,47 +174,33 @@ function connectToTikTok(username) {
     });
 
   tiktokConnection.on('chat', (data) => {
-    // === DEBUG: Log SEMUA field dari data object ===
-    console.log('[CHAT DEBUG - Full Data]', JSON.stringify(data, null, 2));
-    console.log('[CHAT DEBUG - Field Check]', {
-      nickname: data.nickname,
-      uniqueId: data.uniqueId,
-      userName: data.userName,
-      user_name: data.user_name,
-      sender: data.sender,
-      author: data.author,
-      comment: data.comment?.substring(0, 50),
-      userId: data.userId,
-      msgId: data.msgId,
-    });
-    // ============================================
+    // === FIX: Euler Stream punya struktur nested (user.nickname, event.msgId) ===
+    const username = data.user?.nickname || data.user?.uniqueId || data.nickname || data.uniqueId || 'unknown';
+    const userId = data.user?.userId || data.userId || 'u';
+    const msgId = data.event?.msgId || data.msgId || Date.now();
+    const avatar = data.user?.profilePicture?.urls?.[0] || data.profilePictureUrl;
+
+    console.log('[Chat] Username:', username, '| Message:', data.comment?.substring(0, 50));
 
     broadcastChat({
-      id: `${data.userId || 'u'}-${data.msgId || Date.now()}`,
-      username: data.nickname || data.uniqueId || 'unknown',
+      id: `${userId}-${msgId}`,
+      username: username,
       message: data.comment || '',
       timestamp: Date.now(),
-      avatar: data.profilePictureUrl,
+      avatar: avatar,
     });
   });
 
   tiktokConnection.on('gift', (data) => {
-    // === DEBUG: Log gift/donation data ===
-    console.log('[GIFT DEBUG]', {
-      nickname: data.nickname,
-      uniqueId: data.uniqueId,
-      userName: data.userName,
-      giftName: data.giftName,
-      diamondCount: data.diamondCount,
-      userId: data.userId,
-    });
-    // ====================================
+    // === FIX: Euler Stream nested structure ===
+    const username = data.user?.nickname || data.user?.uniqueId || data.nickname || data.uniqueId || 'unknown';
+    const userId = data.user?.userId || data.userId || 'u';
 
     const isStreakable = data.giftType === 1;
     if (!isStreakable || data.repeatEnd) {
       broadcastDonation({
-        id: `${data.userId || 'u'}-${Date.now()}`,
-        username: data.nickname || data.uniqueId || 'unknown',
+        id: `${userId}-${Date.now()}`,
+        username: username,
         amount: (data.diamondCount || 0) * (data.repeatCount || 1),
         message: data.giftName || 'sent a gift',
         timestamp: Date.now(),
@@ -232,8 +218,10 @@ function connectToTikTok(username) {
   // BARU: WebcastMemberMessage -- ke-trigger tiap ada orang baru masuk
   // room live. Sebelumnya event ini gak pernah di-listen sama sekali,
   // makanya nama yang join gak pernah nyampe ke overlay app.
+  // FIX: Support nested Euler Stream structure
   tiktokConnection.on('member', (data) => {
-    broadcastJoin(data.nickname || data.uniqueId || 'someone');
+    const username = data.user?.nickname || data.user?.uniqueId || data.nickname || data.uniqueId || 'someone';
+    broadcastJoin(username);
   });
 
   // FIX: WebcastLikeMessage. `totalLikeCount` dari library ini biasanya
@@ -252,12 +240,14 @@ function connectToTikTok(username) {
   // FIX: WebcastSocialMessage dipakai buat follow DAN share -- kita cuma
   // hitung yang follow. `displayType` isinya string kayak
   // "pm_main_follow_message_viewer_2", makanya dicek pakai .includes().
+  // FIX: Support nested Euler Stream structure
   tiktokConnection.on('social', (data) => {
     const displayType = String(data?.displayType || '').toLowerCase();
     if (displayType.includes('follow')) {
       followCountTotal += 1;
       broadcastFollowCount(followCountTotal);
-      broadcastNewFollower(data.nickname || data.uniqueId || 'someone');
+      const username = data.user?.nickname || data.user?.uniqueId || data.nickname || data.uniqueId || 'someone';
+      broadcastNewFollower(username);
     }
   });
 
