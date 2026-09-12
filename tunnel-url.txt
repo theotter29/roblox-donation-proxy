@@ -1,1 +1,1 @@
-https://bottom-jvc-fairy-cycling.trycloudflare.com
+https://api.trycloudflare.com
